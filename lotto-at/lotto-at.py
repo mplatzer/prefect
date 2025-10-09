@@ -1,7 +1,17 @@
 import pandas as pd
 import numpy as np
 
-def main():
+from prefect import flow, task
+from prefect.blocks.system import Secret
+from github import Github
+import base64
+import os
+
+@task
+def generate(
+    output_path: str = "lotto-at/lotto-1986-2025.csv",
+):
+
     # 1986 - 2010
     dd = pd.read_csv('lotto-at/orig/lotto-ergebnisse-1986-2010.csv.gz', encoding='latin-1', sep=';')
     dd.columns = [f'c{i}' for i in range(dd.shape[1])]
@@ -44,7 +54,6 @@ def main():
         if i < len(dd) - 1 and dd['Datum'].dt.month[i+1] == 1 and dd['Datum'].dt.month[i] == 12:
             year += 1
     d1 = dd.copy()
-
 
     # 2010 - 2017
     df = pd.read_csv('lotto-at/orig/lotto-ziehungen-2010-2017.csv.gz', encoding='latin-1', sep=';')
@@ -97,7 +106,6 @@ def main():
             year += 1
     d2 = dd.copy()
 
-
     # 2018 - 2025
     dfs = []
     for y in [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]:
@@ -134,7 +142,6 @@ def main():
         dfs.append(dd)
     df = pd.concat(dfs).reset_index(drop=True)
     d3 = df.copy()
-
 
     # CONCAT
     df = pd.concat([d1, d2, d3],axis=0)[d3.columns]
@@ -222,7 +229,44 @@ def main():
 
     df.columns = [c.replace('Gewinne', 'Gewinner') for c in df.columns]
 
-    df.to_csv('lotto-at/lotto-1986-2025.csv', index=False)
+    df.to_csv(output_path, index=False)
 
-if __name__ == "__main__":
-    main()
+
+@task
+def commit_csv_file(
+    file_path: str = "lotto-at/lotto-1986-2025.csv",
+    repo_name: str = "mplatzer/prefect",
+    repo_path: str = "lotto-at/lotto-1986-2025.csv",
+    branch: str = "main",
+):
+    token = Secret.load("github-lotto-pat").get()
+
+    # Connect to GitHub
+    g = Github(token)
+    repo = g.get_repo(repo_name)
+    commit_message = f"Update {repo_path} from Prefect flow"
+
+    # Read the file from disk
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Check if file already exists in repo
+    try:
+        existing_file = repo.get_contents(repo_path, ref=branch)
+        repo.update_file(
+            path=repo_path,
+            message=commit_message,
+            content=content,
+            sha=existing_file.sha,
+            branch=branch,
+        )
+        print(f"✅ Updated existing file: {repo_path}")
+    except Exception:
+        repo.create_file(repo_path, commit_message, content, branch=branch)
+        print(f"✅ Created new file: {repo_path}")
+
+
+@flow
+def main():
+    generate()
+    commit_csv_file()
