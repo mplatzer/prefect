@@ -2,14 +2,8 @@ import pandas as pd
 import numpy as np
 from io import StringIO
 from datetime import datetime
-from pathlib import Path
-
-from prefect import flow, task
-from prefect.blocks.system import Secret
-from github import Github
 import requests
 import certifi
-import os
 
 
 def _read_csv_with_tls(url: str) -> pd.DataFrame:
@@ -17,7 +11,6 @@ def _read_csv_with_tls(url: str) -> pd.DataFrame:
     response.raise_for_status()
     return pd.read_csv(StringIO(response.text), encoding="latin-1", sep=";", dtype="str")
 
-@task
 def generate(
     output_path: str = "lotto-at/lotto-history.csv",
 ):
@@ -242,60 +235,8 @@ def generate(
 
     df.to_csv(output_path, index=False)
 
-
-@task
-def commit_csv_file(
-    file_path: str = "lotto-at/lotto-history.csv",
-    repo_name: str = "mplatzer/prefect",
-    repo_path: str = "lotto-at/lotto-history.csv",
-    branch: str = "main",
-):
-    token = None
-    try:
-        token = Secret.load("github-lotto-pat").get()
-    except Exception:
-        pass
-    if not token:
-        token = os.environ.get("GITHUB_TOKEN")
-    if not token:
-        pat_file = Path("prefect.pat")
-        if pat_file.exists():
-            token = pat_file.read_text(encoding="utf-8").strip()
-    if not token:
-        raise RuntimeError(
-            "No GitHub token found. Configure Prefect Secret 'github-lotto-pat', "
-            "set GITHUB_TOKEN, or create a local prefect.pat file."
-        )
-
-    # Connect to GitHub
-    g = Github(token)
-    repo = g.get_repo(repo_name)
-    commit_message = f"Update {repo_path} from Prefect flow"
-
-    # Read the file from disk
-    with open(file_path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    # Check if file already exists in repo
-    try:
-        existing_file = repo.get_contents(repo_path, ref=branch)
-        repo.update_file(
-            path=repo_path,
-            message=commit_message,
-            content=content,
-            sha=existing_file.sha,
-            branch=branch,
-        )
-        print(f"✅ Updated existing file: {repo_path}")
-    except Exception:
-        repo.create_file(repo_path, commit_message, content, branch=branch)
-        print(f"✅ Created new file: {repo_path}")
-
-
-@flow
 def main():
     generate()
-    commit_csv_file()
 
 
 if __name__ == "__main__":
