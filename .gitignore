@@ -1,7 +1,2 @@
 __pycache__/
 *.py[cod]
-
-# Local secrets/keys
-prefect.pat
-prefect_deploy_key
-prefect_deploy_key.pub
