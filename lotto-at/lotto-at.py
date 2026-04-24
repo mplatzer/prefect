@@ -1,15 +1,25 @@
 import pandas as pd
 import numpy as np
+from io import StringIO
+from datetime import datetime
+from pathlib import Path
 
 from prefect import flow, task
 from prefect.blocks.system import Secret
 from github import Github
-import base64
+import requests
+import certifi
 import os
+
+
+def _read_csv_with_tls(url: str) -> pd.DataFrame:
+    response = requests.get(url, timeout=30, verify=certifi.where())
+    response.raise_for_status()
+    return pd.read_csv(StringIO(response.text), encoding="latin-1", sep=";", dtype="str")
 
 @task
 def generate(
-    output_path: str = "lotto-at/lotto-1986-2025.csv",
+    output_path: str = "lotto-at/lotto-history.csv",
 ):
 
     # 1986 - 2010
@@ -106,13 +116,14 @@ def generate(
             year += 1
     d2 = dd.copy()
 
-    # 2018 - 2025
+    # 2018 - current year
     dfs = []
-    for y in [2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025]:
+    current_year = datetime.now().year
+    for y in range(2018, current_year + 1):
         print(y)
         fn = f'https://statics.win2day.at/media/NN_W2D_STAT_Lotto_{y}.csv'
         #fn = f'lotto-at/orig/NN_W2D_STAT_Lotto_{y}.csv.gz'
-        df = pd.read_csv(fn, encoding='latin-1', sep=';', dtype='str')
+        df = _read_csv_with_tls(fn)
         df1 = df.iloc[[(2*i) for i in range(len(df)//2)]].reset_index(drop=True)
         df2 = df.iloc[[(2*i)+1 for i in range(len(df)//2)]].reset_index(drop=True).add_prefix('x')
         dd = pd.concat([df1, df2.drop(columns=['xDatum'])], axis=1)
@@ -234,12 +245,27 @@ def generate(
 
 @task
 def commit_csv_file(
-    file_path: str = "lotto-at/lotto-1986-2025.csv",
+    file_path: str = "lotto-at/lotto-history.csv",
     repo_name: str = "mplatzer/prefect",
-    repo_path: str = "lotto-at/lotto-1986-2025.csv",
+    repo_path: str = "lotto-at/lotto-history.csv",
     branch: str = "main",
 ):
-    token = Secret.load("github-lotto-pat").get()
+    token = None
+    try:
+        token = Secret.load("github-lotto-pat").get()
+    except Exception:
+        pass
+    if not token:
+        token = os.environ.get("GITHUB_TOKEN")
+    if not token:
+        pat_file = Path("prefect.pat")
+        if pat_file.exists():
+            token = pat_file.read_text(encoding="utf-8").strip()
+    if not token:
+        raise RuntimeError(
+            "No GitHub token found. Configure Prefect Secret 'github-lotto-pat', "
+            "set GITHUB_TOKEN, or create a local prefect.pat file."
+        )
 
     # Connect to GitHub
     g = Github(token)
@@ -270,3 +296,7 @@ def commit_csv_file(
 def main():
     generate()
     commit_csv_file()
+
+
+if __name__ == "__main__":
+    main()
