@@ -154,10 +154,19 @@ def generate(
     idx = df.Datum.dt.year < 2001
     for col in df:
         if col.endswith('Betrag'):
-            df[col] = df[col].where(-idx, (df[col].astype(float) / 13.7602).round(2))
+            # Use boolean inversion (~idx) for pandas 3 compatibility.
+            df[col] = df[col].where(~idx, (df[col].astype(float) / 13.7602).round(2))
             df[col] = df[col].astype("Float64")
-        if col.endswith('Gewinne') and df.dtypes[col] != 'object':
-            df[col] = df[col].astype("Int64")
+    # Keep jackpot-capable winner columns as strings; only coerce numeric-only ones.
+    numeric_winner_cols = [
+        '4er ZZ - Gewinne',
+        '4er - Gewinne',
+        '3er ZZ - Gewinne',
+        '3er - Gewinne',
+        'ZZ - Gewinne',
+    ]
+    for col in numeric_winner_cols:
+        df[col] = pd.to_numeric(df[col], errors='coerce').astype("Int64")
     df['6er - Gewinne'] = df['6er - Gewinne'].str.strip().replace({'2JP': 'DJP', '2 JP': 'DJP', '3 JP': '3JP', '3-JP': '3JP', '0': 'JP'})
     df['5er ZZ - Gewinne'] = df['5er ZZ - Gewinne'].str.strip().replace({'2JP': 'DJP', '2 JP': 'DJP', '3 JP': '3JP', '3-JP': '3JP', '0': 'JP'})
     df['4er ZZ - Gewinne'] = df['4er ZZ - Gewinne'].astype("Int64")
